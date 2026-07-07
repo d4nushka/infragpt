@@ -1,0 +1,12 @@
+kafka-python==2.0.5
+requests
+numpy
+python-dotenv
+groq
+fastapi
+uvicorn
+langgraph
+langchain
+langchain-groq
+supabase
+sentence-transformers
