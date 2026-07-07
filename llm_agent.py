@@ -7,7 +7,19 @@ load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-def analyze_anomaly(metric: dict, scores: dict, triggered: list) -> dict:
+
+def analyze_anomaly(metric: dict, scores: dict, triggered: list, similar_incidents: list = None) -> dict:
+    # Format similar past incidents for context
+    past_context = ""
+    if similar_incidents:
+        past_context = "\nSIMILAR PAST INCIDENTS:\n"
+        for inc in similar_incidents:
+            date = inc.get("created_at", "")[:10]
+            past_context += (
+                f"- [{date}] {inc['severity']} on {inc['service']}: "
+                f"{inc['root_cause']} → fixed by: {inc['action_taken']}\n"
+            )
+
     prompt = f"""You are an expert SRE analyzing a cloud infrastructure anomaly.
 
 ANOMALY DATA:
@@ -19,9 +31,7 @@ CURRENT METRICS vs BASELINE:
 - Latency p99: {metric['latency_p99_ms']}ms (z-score: {scores['latency_p99_ms']})
 - Error rate: {metric['error_rate_percent']}% (z-score: {scores['error_rate_percent']})
 - Pod restarts: {metric['pod_restarts']} (z-score: {scores['pod_restarts']})
-
-A z-score above 2.5 means significantly above recent baseline.
-
+{past_context}
 Respond in this EXACT JSON format only, no extra text:
 {{
     "severity": "P0 or P1 or P2",
@@ -39,7 +49,6 @@ Respond in this EXACT JSON format only, no extra text:
 
     text = response.choices[0].message.content.strip()
 
-    # Strip markdown code blocks if present
     if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):

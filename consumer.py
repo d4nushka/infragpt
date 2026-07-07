@@ -7,6 +7,7 @@ from collections import deque
 from kafka import KafkaConsumer
 from dotenv import load_dotenv
 from llm_agent import analyze_anomaly
+from incident_memory import store_incident, find_similar_incidents
 
 load_dotenv()
 SLACK_WEBHOOK   = os.getenv("SLACK_WEBHOOK_URL")
@@ -46,11 +47,18 @@ def update_history(metric):
         history[key].append(metric[key])
 
 
-def send_slack_alert_with_buttons(metric, scores, triggered, llm_result):
+def send_slack_alert_with_buttons(metric, scores, triggered, llm_result, similar):
     severity_emoji = {"P0": "🔴", "P1": "🟠", "P2": "🟡"}.get(
         llm_result["severity"], "🟠"
     )
     signals_text = "`, `".join(triggered)
+
+    similar_text = ""
+    if similar:
+        similar_text = "\n*Similar Past Incidents:*\n"
+        for inc in similar:
+            date = inc.get("created_at", "")[:10]
+            similar_text += f"• [{date}] {inc['severity']}: {inc['root_cause']}\n"
 
     payload = {
         "blocks": [
@@ -87,10 +95,11 @@ def send_slack_alert_with_buttons(metric, scores, triggered, llm_result):
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"*🧠 LLM Root Cause Analysis*\n"
+                        f"*Root Cause Analysis*\n"
                         f"*Probable cause:* {llm_result['root_cause']}\n"
                         f"*Recommended action:* {llm_result['action']}\n\n"
                         f"_{llm_result['explanation']}_"
+                        f"{similar_text}"
                     )
                 }
             },
@@ -121,7 +130,7 @@ def send_slack_alert_with_buttons(metric, scores, triggered, llm_result):
             {
                 "type": "context",
                 "elements": [
-                    {"type": "mrkdwn", "text": "InfraGPT Phase 2 — LLM-powered analysis — human-in-the-loop"}
+                    {"type": "mrkdwn", "text": "InfraGPT — Autonomous Cloud Operations Agent"}
                 ]
             }
         ]
@@ -141,7 +150,7 @@ if __name__ == "__main__":
         bootstrap_servers='localhost:9092',
         value_deserializer=lambda m: json.loads(m.decode('utf-8')),
         auto_offset_reset='latest',
-        group_id='infragpt-detector-v2',
+        group_id='infragpt-detector-v3',
         consumer_timeout_ms=-1
     )
     print("Listening. Waiting for metrics...\n")
@@ -165,10 +174,18 @@ if __name__ == "__main__":
         if is_anomaly:
             now = time.time()
             if (now - last_alert_time) > ALERT_COOLDOWN:
+                print("  Searching vector memory for similar incidents...")
+                similar = find_similar_incidents(metric, triggered)
+                print(f"  Found {len(similar)} similar past incidents")
+
                 print("  Calling LLM for analysis...")
-                llm_result = analyze_anomaly(metric, scores, triggered)
+                llm_result = analyze_anomaly(metric, scores, triggered, similar)
                 print(f"  LLM says: {llm_result['severity']} — {llm_result['root_cause']}")
-                send_slack_alert_with_buttons(metric, scores, triggered, llm_result)
+
+                print("  Storing incident in Supabase...")
+                store_incident(metric, scores, triggered, llm_result)
+
+                send_slack_alert_with_buttons(metric, scores, triggered, llm_result, similar)
                 last_alert_time = now
             else:
                 remaining = int(ALERT_COOLDOWN - (now - last_alert_time))

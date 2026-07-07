@@ -136,7 +136,7 @@ Your job:
 2. Find the pod(s) related to {service}
 3. Execute the appropriate remediation (restart the affected pod OR scale the deployment)
 4. Verify the fix worked by checking deployment status
-5. Return a summary of what you did
+5. Return a concise summary of what you did and the final state
 
 Be decisive. Execute the remediation now."""
 
@@ -146,8 +146,13 @@ Be decisive. Execute the remediation now."""
         "messages": [{"role": "user", "content": prompt}]
     })
 
-    final_message = result["messages"][-1].content
-    print(f"[AGENT] Completed. Summary: {final_message[:200]}")
+    final_message = result["messages"][-1].content.strip()
+
+    # Strip "Summary:" prefix if LLM adds it
+    if final_message.lower().startswith("summary:"):
+        final_message = final_message[8:].strip()
+
+    print(f"[AGENT] Completed: {final_message[:200]}")
     return final_message
 
 

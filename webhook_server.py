@@ -15,8 +15,8 @@ SLACK_BOT_TOKEN      = os.getenv("SLACK_BOT_TOKEN")
 
 app = FastAPI()
 
-# Store pending actions temporarily in memory
 pending_actions = {}
+
 
 def verify_slack_signature(request_body: bytes, timestamp: str, signature: str) -> bool:
     if abs(time.time() - int(timestamp)) > 60 * 5:
@@ -28,6 +28,7 @@ def verify_slack_signature(request_body: bytes, timestamp: str, signature: str) 
         hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(computed, signature)
+
 
 def update_slack_message(channel: str, ts: str, text: str):
     requests.post(
@@ -45,6 +46,7 @@ def update_slack_message(channel: str, ts: str, text: str):
             ]
         }
     )
+
 
 @app.post("/slack/actions")
 async def handle_action(request: Request):
@@ -66,17 +68,15 @@ async def handle_action(request: Request):
     user       = payload["user"]["name"]
 
     if action_id == "approve_action":
-        print(f"\n[APPROVED] by @{user} — launching ReAct agent...")
+        print(f"\n[APPROVED] by @{user} — launching autonomous agent...")
 
-        # Update Slack immediately so user knows it's running
         update_slack_message(
             channel, message_ts,
-            f"⚙️ *Action APPROVED by @{user}*\n"
-            f"🤖 LangGraph ReAct agent is executing remediation...\n"
+            f"*Action APPROVED by @{user}*\n"
+            f"Executing remediation via autonomous agent...\n"
             f"_This may take 20-30 seconds_"
         )
 
-        # Get the anomaly context stored from the alert
         anomaly_context = pending_actions.get(message_ts, {
             "service": "payment-service",
             "severity": "P1",
@@ -84,22 +84,20 @@ async def handle_action(request: Request):
             "action": "Restart the affected pod"
         })
 
-        # Run the agent in background
         import threading
         def run_agent():
             try:
                 result = run_remediation(anomaly_context)
-                # Update Slack with agent result
                 update_slack_message(
                     channel, message_ts,
-                    f"✅ *Remediation Complete — approved by @{user}*\n\n"
-                    f"*Agent Summary:*\n{result[:500]}"
+                    f"*Remediation Complete — approved by @{user}*\n\n"
+                    f"{result[:500]}"
                 )
                 print(f"[AGENT DONE] Slack updated with result.")
             except Exception as e:
                 update_slack_message(
                     channel, message_ts,
-                    f"⚠️ *Remediation failed:* {str(e)}"
+                    f"*Remediation failed:* {str(e)}"
                 )
                 print(f"[AGENT ERROR] {e}")
 
@@ -109,15 +107,14 @@ async def handle_action(request: Request):
         print(f"\n[REJECTED] by @{user} — standing down.")
         update_slack_message(
             channel, message_ts,
-            f"❌ *Action REJECTED by @{user}*\n"
-            f"👀 Incident logged. Manual investigation required."
+            f"*Action REJECTED by @{user}*\n"
+            f"Incident logged. Manual investigation required."
         )
 
     return Response(content="", status_code=200)
 
 
 def store_pending_action(message_ts: str, anomaly_context: dict):
-    """Called from consumer.py to store context for later approval."""
     pending_actions[message_ts] = anomaly_context
 
 
