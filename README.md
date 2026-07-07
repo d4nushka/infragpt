@@ -1,185 +1,157 @@
-# InfraGPT — Autonomous Cloud Operations Agent
+# InfraGPT
 
-An AI agent that monitors, diagnoses, and helps self-heal cloud infrastructure in real time.
-Built as a final year project demonstrating agentic AI + cloud automation + event streaming.
+I built this because I was frustrated with how monitoring works today.
+
+Every alert system I've used does the same thing — it waits for a metric to cross a threshold, then sends you a noisy Slack ping at 2am. You wake up, stare at a dashboard, and spend 20 minutes figuring out what actually happened and what to do about it.
+
+InfraGPT does something different. It watches multiple signals at once, reasons about what's wrong, tells you what it thinks caused it, and asks if you want it to fix it. If you say yes, it does.
 
 ---
 
-## What it does
-
-Most monitoring tools just send alerts. InfraGPT reasons about them.
+## What it actually does
 
 When your infrastructure behaves abnormally, InfraGPT:
-1. Detects the anomaly using multi-signal statistical correlation (not just threshold breaches)
-2. Calls an LLM to diagnose the root cause and recommend a fix
-3. Sends a rich Slack alert with an AI-generated explanation
-4. Asks for human approval before taking any action
-5. Executes the remediation on approval (Phase 3: real Kubernetes)
+
+1. Detects anomalies using z-score based multi-signal correlation — not just "CPU > 80%"
+2. Searches its memory of past incidents to see if this has happened before
+3. Calls an LLM to diagnose the probable root cause using current metrics + historical context
+4. Sends a structured Slack alert with its analysis and recommended action
+5. Waits for a human to approve or reject before doing anything
+6. On approval, runs a LangGraph ReAct agent that interacts with your Kubernetes cluster to fix it
+7. Stores the resolved incident back into vector memory so future diagnoses get smarter
+
+The key insight is that a single spiking metric is noise. Three metrics spiking simultaneously is a real incident. This is how experienced SREs think — InfraGPT mimics that reasoning.
 
 ---
 
-## Demo
+## The stack
 
-### Anomaly detected + LLM analysis + Approve/Reject buttons in Slack
-![Slack alert with buttons](docs/slack_alert.png)
-
-### Terminal showing real-time z-score based detection
-![Terminal output](docs/terminal_output.png)
-
----
-
-## Architecture
-Metric Simulator → Kafka (metrics-raw topic) → Anomaly Consumer
-↓
-Z-score engine
-(multi-signal check)
-↓
-LLM Agent (Groq)
-(root cause analysis)
-↓
-Slack alert + buttons
-↓
-FastAPI webhook server
-(receives button clicks)
-↓
-Remediation engine (Phase 3: K8s)
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Event streaming | Apache Kafka (Docker) |
-| Anomaly detection | Python, NumPy, z-score statistical analysis |
-| LLM reasoning | Groq API (LLaMA 3.1) |
-| Alert delivery | Slack Block Kit, Incoming Webhooks |
-| Human-in-the-loop | Slack Interactive Buttons, FastAPI |
-| Webhook server | FastAPI + uvicorn |
-| Tunnel (dev) | ngrok |
-| Orchestration (Phase 3) | Kubernetes via K3d |
-| Backend sidecar (Phase 3) | Java Spring Boot |
+- **Apache Kafka** — event streaming backbone, metrics flow through a real-time topic
+- **Python + NumPy** — z-score anomaly detection with sliding window baselines
+- **Groq (LLaMA 3.1)** — LLM for root cause analysis and severity classification
+- **Supabase + pgvector** — vector database for semantic incident memory
+- **sentence-transformers** — local embeddings, no API cost
+- **Slack Block Kit** — structured alerts with interactive Approve/Reject buttons
+- **FastAPI + ngrok** — webhook server to receive Slack button callbacks
+- **LangGraph ReAct** — autonomous agent loop: observe → reason → act → verify
+- **K3d** — lightweight local Kubernetes for pod management
+- **Docker + Docker Compose** — entire local setup runs for $0
 
 ---
 
 ## Why multi-signal detection matters
 
-A naive system fires an alert when CPU > 80%.
-A senior SRE ignores that — CPU spikes happen during deploys.
+A naive alerting system fires when CPU crosses 80%. A senior SRE ignores that alert — CPU spikes happen all the time during deploys.
 
-InfraGPT fires only when **multiple signals spike simultaneously**:
-- CPU z-score > 2.5 AND
-- Latency p99 z-score > 2.5 AND/OR
-- Error rate z-score > 2.5
+What actually matters is when CPU spikes *and* latency climbs *and* error rate jumps *at the same time*. That combination means something. InfraGPT uses z-scores to measure how far each metric is from its recent baseline, and only triggers when at least two signals cross the threshold simultaneously.
 
-This is how real SREs think. The LLM then correlates these signals
-to identify the most probable root cause — OOMKilled pod, connection
-pool exhaustion, resource starvation, etc.
+This cuts out noise almost entirely.
+
+---
+
+## Why vector memory matters
+
+The first time your payment service OOMKills, the LLM has to reason about it from scratch. The fifth time, InfraGPT has seen this before — it finds the three most similar past incidents in Supabase and injects them into the prompt. The diagnosis is faster and more accurate. The system genuinely gets smarter over time.
 
 ---
 
 ## Project structure
 infragpt/
-├── simulator.py        # Generates fake metrics with injected spikes
-├── consumer.py         # Kafka consumer + anomaly detection engine
-├── llm_agent.py        # Groq LLM integration for root cause analysis
-├── webhook_server.py   # FastAPI server for Slack button callbacks
-├── docker-compose.yml  # Kafka + Zookeeper local setup
-├── .env                # API keys (not committed)
-└── README.md
+├── simulator.py          # generates fake metrics with injected spikes
+├── consumer.py           # Kafka consumer, anomaly detection, orchestration
+├── llm_agent.py          # Groq integration for root cause analysis
+├── langgraph_agent.py    # LangGraph ReAct agent for K8s remediation
+├── incident_memory.py    # Supabase vector memory — store and search incidents
+├── webhook_server.py     # FastAPI server for Slack button callbacks
+├── k8s-deployments.yml   # fake microservice deployments for local K8s
+├── docker-compose.yml    # Kafka + Zookeeper local setup
+└── .env.example          # required environment variables
 ---
 
-## How to run locally
+## Running it locally
 
 ### Prerequisites
+
 - Python 3.11+
 - Docker Desktop
-- Slack workspace with InfraGPT app installed
-- Groq API key (free at console.groq.com)
-- ngrok (free at ngrok.com)
+- k3d (`winget install k3d`)
+- kubectl (`winget install kubectl`)
+- Free accounts: Slack, Groq, Supabase, ngrok
 
 ### Setup
 
 ```bash
-# Clone the repo
 git clone https://github.com/d4nushka/infragpt.git
 cd infragpt
-
-# Create virtual environment
 python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Mac/Linux
-
-# Install dependencies
-pip install kafka-python==2.0.5 requests numpy python-dotenv groq fastapi uvicorn
-
-# Add your keys to .env
-cp .env.example .env
-# Fill in SLACK_WEBHOOK_URL, GROQ_API_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+venv\Scripts\activate
+pip install kafka-python==2.0.5 requests numpy python-dotenv groq fastapi uvicorn \
+            langgraph langchain langchain-groq supabase sentence-transformers
 ```
 
-### Run
+Copy `.env.example` to `.env` and fill in your keys.
+
+### Start everything
 
 ```bash
-# Terminal 1 — start Kafka
+# Start Kafka
 docker compose up -d
 
-# Terminal 2 — start webhook server
+# Start K3d cluster
+k3d cluster start infragpt
+
+# Deploy fake microservices
+kubectl apply -f k8s-deployments.yml
+
+# Terminal 1 — webhook server
 uvicorn webhook_server:app --port 8000
 
-# Terminal 3 — start ngrok
-.\ngrok.exe http 8000
+# Terminal 2 — ngrok tunnel
+ngrok http 8000
 
-# Terminal 4 — start metric simulator
+# Terminal 3 — metric simulator
 python simulator.py
 
-# Terminal 5 — start anomaly consumer
+# Terminal 4 — anomaly consumer
 python consumer.py
 ```
 
----
-
-## Phases
-
-| Phase | Status | Description |
-|---|---|---|
-| Phase 1 | ✅ Complete | Kafka pipeline + multi-signal anomaly detection + Slack alerts |
-| Phase 2 | ✅ Complete | LLM root cause analysis + human-in-the-loop Approve/Reject |
-| Phase 3 | 🔨 In progress | LangGraph ReAct agent + K3d Kubernetes + auto pod restart |
+Update your Slack app's Interactivity URL to `https://your-ngrok-url/slack/actions`.
 
 ---
 
-## Key design decisions
+## How the alert looks
 
-**Why Kafka over direct function calls?**
-Real infrastructure monitoring is event-driven. Kafka decouples metric
-producers from consumers, allows multiple consumers, and handles backpressure.
-This mirrors how production systems like Datadog and PagerDuty work internally.
+When an anomaly is detected, InfraGPT posts to Slack with:
+- Severity level (P0 / P1 / P2) with colour indicator
+- Current metric values and their z-scores
+- LLM root cause analysis with probable cause and recommended action
+- Similar past incidents retrieved from vector memory
+- Approve and Reject buttons
 
-**Why z-scores over fixed thresholds?**
-Fixed thresholds require manual tuning per service and break during traffic
-spikes. Z-scores adapt to each service's baseline automatically.
-
-**Why human-in-the-loop?**
-An LLM hallucinating in chat is funny. An LLM hallucinating while running
-kubectl delete on your production cluster is not. Every remediation action
-requires explicit human approval before execution.
+Clicking Approve triggers the LangGraph agent. It lists your pods, identifies the affected one, restarts it, and verifies the deployment recovered. The Slack message updates with what it did.
 
 ---
 
-## Skills demonstrated
+## What I learned building this
 
-- Event streaming architecture (Kafka, producers, consumers, topics)
-- Statistical anomaly detection (z-scores, sliding windows, multi-signal correlation)
-- LLM integration with structured JSON output (Groq, LLaMA 3.1)
-- REST API development (FastAPI, webhook verification, Slack signature checking)
-- Cloud automation concepts (SRE practices, incident response, runbooks)
-- Containerisation (Docker, Docker Compose)
-- Kubernetes (K3d — Phase 3)
-- Java Spring Boot microservice (Phase 3)
+Building this on a machine with 5.89GB usable RAM while running Kafka, K3d, an LLM pipeline, and a vector database simultaneously taught me more about resource constraints and system design tradeoffs than any tutorial ever did.
+
+The hardest part wasn't the LLM integration or the Kubernetes agent — it was the multi-signal detection logic. Getting the z-score window size, threshold, and minimum signal count right so the system fires on real incidents without spamming on noise took a lot of iteration.
+
+---
+
+## What's next
+
+- Auto-generate structured RCA reports after each resolved incident
+- Multi-cloud drift detection using Terraform state comparison
+- Cost optimization agent that analyzes AWS spend and suggests right-sizing
+- Deploy on real cloud infrastructure with Confluent Cloud + Railway
 
 ---
 
 ## Built by
 
-Anushka Das — CSE (Cloud Computing & Automation), Final Year
-GitHub: github.com/d4nushka
+Anushka Das  
+BTech CSE, VIT Bhopal — Cloud Computing & Automation  
+[github.com/d4nushka](https://github.com/d4nushka)
