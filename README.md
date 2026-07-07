@@ -56,6 +56,7 @@ The first time your payment service OOMKills, the LLM has to reason about it fro
 ---
 
 ## Project structure
+---
 infragpt/
 ├── simulator.py          # generates fake metrics with injected spikes
 ├── consumer.py           # Kafka consumer, anomaly detection, orchestration
