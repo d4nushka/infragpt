@@ -1,10 +1,8 @@
 # InfraGPT
 
-I built this because I was frustrated with how monitoring works today.
-
-Every alert system I've used does the same thing — it waits for a metric to cross a threshold, then sends you a noisy Slack ping at 2am. You wake up, stare at a dashboard, and spend 20 minutes figuring out what actually happened and what to do about it.
-
-InfraGPT does something different. It watches multiple signals at once, reasons about what's wrong, tells you what it thinks caused it, and asks if you want it to fix it. If you say yes, it does.
+Most monitoring tools tell you something broke. They don't tell you why, and they definitely don't fix it.
+Every alert system works the same way — wait for a metric to cross a threshold, send a Slack ping at 2am. You wake up, stare at a dashboard, and spend 20 minutes figuring out what actually happened and what to do about it.
+InfraGPT is different. It watches multiple signals simultaneously, reasons about what's wrong using an LLM, checks if this has happened before, and asks if you want it to fix it. If you say yes, it does — autonomously, on your Kubernetes cluster.
 
 ---
 
